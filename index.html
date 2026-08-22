@@ -19,7 +19,7 @@
   textarea{width:100%;min-height:180px;border:1px solid var(--border);border-radius:12px;padding:12px;font-size:16px;line-height:1.55;resize:vertical;font-family:inherit;color:var(--ink);background:#fdfdfd}
   textarea:focus{outline:2px solid var(--green);border-color:transparent}
   .controls{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
-  button{border:none;border-radius:999px;padding:13px 20px;font-size:15px;font-weight:600;cursor:pointer;transition:transform .1s,opacity .15s;flex:1;min-width:100px}
+  button{border:none;border-radius:999px;padding:13px 18px;font-size:15px;font-weight:600;cursor:pointer;transition:transform .1s,opacity .15s;flex:1;min-width:90px}
   button:active{transform:scale(.97)}
   .btn-play{background:var(--green);color:#fff}.btn-play:hover{opacity:.9}
   .btn-stop{background:#ef4444;color:#fff}.btn-stop:hover{opacity:.9}
@@ -33,6 +33,7 @@
   .status{margin-top:12px;font-size:14px;color:var(--muted);min-height:20px;word-break:break-word}
   .status .ok{color:var(--green-dark);font-weight:600}
   .status .err{color:#dc2626;font-weight:600}
+  .status .warn{color:#b45309;font-weight:600}
   .sample{background:#f0fdf4;border:1px dashed var(--green);border-radius:10px;padding:10px 12px;font-size:13.5px;color:var(--green-dark);cursor:pointer;margin-top:12px}
   .sample:hover{background:#dcfce7}
   .foot{text-align:center;color:var(--muted);font-size:12px;margin-top:16px}
@@ -83,7 +84,7 @@
         rateEl=document.getElementById('rate'), rateVal=document.getElementById('rateVal'),
         statusEl=document.getElementById('status'), playBtn=document.getElementById('playBtn'),
         progressWrap=document.getElementById('progressWrap'), progressBar=document.getElementById('progressBar');
-  let queue=[], playing=false, audio=null;
+  let queue=[], playing=false, audio=null, engine='google';
 
   rateEl.addEventListener('input',()=>rateVal.textContent=parseFloat(rateEl.value).toFixed(2)+'×');
 
@@ -99,21 +100,48 @@
     return chunks;
   }
 
-  function ttsUrl(text,voice){
-    // Google free TTS endpoint — works in any browser, no key
+  function googleTtsUrl(text,voice){
+    // 'tw-ob' client works from browsers; no-referrer policy on <audio> avoids rejection
     return 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl='+voice+
            '&q='+encodeURIComponent(text);
   }
 
   function playChunk(i){
     if(i>=queue.length){ playing=false; progressBar.style.width='100%'; statusEl.innerHTML='<span class="ok">✅ Finished.</span>'; return; }
-    audio=new Audio(ttsUrl(queue[i],voiceEl.value));
+    audio=new Audio();
+    // KEY FIX: suppress the referrer so Google's free voice accepts the request
+    audio.referrerPolicy='no-referrer';
+    audio.src=googleTtsUrl(queue[i],voiceEl.value);
     audio.playbackRate=parseFloat(rateEl.value);
     progressBar.style.width=((i/queue.length)*100)+'%';
     statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+queue.length+'…</span>';
     audio.onended=()=>playChunk(i+1);
-    audio.onerror=()=>{ statusEl.innerHTML='<span class="err">⚠️ Network blocked the voice service. Check connection and retry.</span>'; playing=false; };
+    audio.onerror=()=>{
+      if(engine==='google'){
+        // fallback: try the device's own voices (Web Speech API) — always works offline
+        engine='device';
+        statusEl.innerHTML='<span class="warn">⚠️ Online voice blocked — switching to phone voices.</span>';
+        playDevice(queue,0);
+      } else {
+        statusEl.innerHTML='<span class="err">⚠️ Could not play audio. Try again or check connection.</span>';
+        playing=false;
+      }
+    };
     audio.play().catch(()=>{});
+  }
+
+  function playDevice(chunks,i){
+    if(i>=chunks.length){playing=false;statusEl.innerHTML='<span class="ok">✅ Finished.</span>';return;}
+    if(!('speechSynthesis' in window)){statusEl.innerHTML='<span class="err">⚠️ No voice available on this phone.</span>';playing=false;return;}
+    const u=new SpeechSynthesisUtterance(chunks[i]);
+    u.rate=parseFloat(rateEl.value);
+    const lang=voiceEl.value;
+    const v=speechSynthesis.getVoices().find(x=>x.lang&&x.lang.toLowerCase().startsWith(lang));
+    if(v)u.voice=v;
+    progressBar.style.width=((i/chunks.length)*100)+'%';
+    statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+chunks.length+' (phone voice)…</span>';
+    u.onend=()=>playDevice(chunks,i+1);
+    speechSynthesis.speak(u);
   }
 
   function speak(){
@@ -122,7 +150,7 @@
     stop();
     queue=chunkText(raw);
     if(!queue.length){statusEl.innerHTML='<span class="err">⚠️ Nothing to read.</span>';return;}
-    playing=true;
+    playing=true; engine='google';
     progressWrap.style.display='block';
     progressBar.style.width='0%';
     playChunk(0);
@@ -130,6 +158,7 @@
 
   function stop(){
     if(audio){audio.pause();audio=null;}
+    if('speechSynthesis' in window) speechSynthesis.cancel();
     playing=false;
     progressWrap.style.display='none';
     statusEl.innerHTML='⏹ Stopped.';
