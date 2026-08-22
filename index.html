@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#16a34a">
-<title>Alef's Text Reader — v3</title>
+<title>Alef's Text Reader — v4</title>
 <style>
   :root{--green:#16a34a;--green-dark:#14532d;--bg:#f6f8f6;--card:#fff;--ink:#1f2937;--muted:#6b7280;--border:#e5e7eb}
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -44,13 +44,15 @@
   .engine-switch{display:flex;gap:8px;margin-top:12px}
   .engine-switch button{flex:1;background:#f3f4f6;color:var(--ink);border:1px solid var(--border);font-size:13px;padding:10px}
   .engine-switch button.active{background:var(--green);color:#fff;border-color:var(--green)}
+  #playerWrap{margin-top:12px;display:none}
+  #playerWrap audio{width:100%}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <div class="logo">📖</div>
-    <div><h1>Alef's Text Reader <span style="font-size:12px;color:var(--muted)">v3</span></h1><div class="sub">Phone edition · fixed for in-app browsers</div></div>
+    <div><h1>Alef's Text Reader <span style="font-size:12px;color:var(--muted)">v4</span></h1><div class="sub">Fixed: visible player + auto-fallback</div></div>
   </header>
 
   <div class="banner">
@@ -89,6 +91,11 @@
       </div>
     </div>
 
+    <div id="playerWrap">
+      <label>If auto-play is blocked, press play here:</label>
+      <audio id="player" controls preload="auto"></audio>
+    </div>
+
     <div class="progress" id="progressWrap"><div class="bar" id="progressBar"></div></div>
     <div class="status" id="status">Ready. Tap "Test voice" first.</div>
   </div>
@@ -101,10 +108,10 @@
     const textEl=$('text'), voiceEl=$('voice'), rateEl=$('rate'), rateVal=$('rateVal'),
           statusEl=$('status'), playBtn=$('playBtn'),
           progressWrap=$('progressWrap'), progressBar=$('progressBar'),
-          engOnline=$('engOnline'), engDevice=$('engDevice');
-    let queue=[], playing=false, audio=null, engine='online', deviceVoices=[];
+          engOnline=$('engOnline'), engDevice=$('engDevice'),
+          playerWrap=$('playerWrap'), player=$('player');
+    let queue=[], playing=false, engine='online', deviceVoices=[], currentIdx=0;
 
-    // ---------- diagnostics ----------
     const hasSpeech = ('speechSynthesis' in window);
     const ua = navigator.userAgent || '';
     const isInAppBrowser = /FBAN|FBAV|Twitter|Line|WhatsApp|Telegram/i.test(ua) && !/Chrome/i.test(ua);
@@ -146,7 +153,6 @@
         : (hasSpeech ? '📱 Phone voice selected — works offline.' : '<span class="err">⚠️ This browser has no phone voice. Use Online voice or open in Chrome.</span>');
     }
 
-    // ---------- chunking ----------
     function chunkText(text,maxLen=180){
       const chunks=[];
       const sentences=text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[text];
@@ -159,43 +165,48 @@
       return chunks;
     }
 
-    // ---------- online engine: <audio> element, dual-host fallback ----------
+    // ---------- online engine: DOM-attached <audio> + visible player ----------
     const HOSTS=['https://translate.googleapis.com/translate_tts','https://translate.google.com/translate_tts'];
     let hostIdx=0;
 
-    function makeAudio(text,voice){
-      const a=new Audio();
-      a.referrerPolicy='no-referrer';
-      a.src=HOSTS[hostIdx]+'?ie=UTF-8&client=gtx&tl='+voice+'&q='+encodeURIComponent(text);
-      a.playbackRate=parseFloat(rateEl.value);
-      return a;
+    function setPlayerSrc(text,voice){
+      playerWrap.style.display='block';
+      player.src=HOSTS[hostIdx]+'?ie=UTF-8&client=gtx&tl='+voice+'&q='+encodeURIComponent(text);
+      player.playbackRate=parseFloat(rateEl.value);
     }
 
     function playOnlineChunk(i){
       if(i>=queue.length){playing=false;progressBar.style.width='100%';statusEl.innerHTML='<span class="ok">✅ Finished.</span>';return;}
-      audio=makeAudio(queue[i], voiceEl.value);
+      currentIdx=i;
+      setPlayerSrc(queue[i], voiceEl.value);
       progressBar.style.width=((i/queue.length)*100)+'%';
       statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+queue.length+'…</span>';
-      audio.onended=()=>playOnlineChunk(i+1);
-      audio.onerror=()=>{
+      // attached element -> play() works in most browsers
+      const p = player.play();
+      if(p && p.catch){
+        p.catch(err=>{
+          // auto-play blocked; the visible player lets the user tap play manually
+          statusEl.innerHTML='<span class="warn">⚠️ Auto-play blocked — press the ▶ on the player below.</span>';
+          playing=false;
+        });
+      }
+      player.onended=()=>playOnlineChunk(i+1);
+      player.onerror=()=>{
         if(hostIdx<HOSTS.length-1){
           hostIdx++;
           statusEl.innerHTML='<span class="warn">⚠️ Switching voice server…</span>';
           playOnlineChunk(i);
         } else {
-          statusEl.innerHTML='<span class="err">⚠️ Online voice blocked on this network. Tap "📱 Phone voice" or open in Chrome.</span>';
+          statusEl.innerHTML='<span class="err">⚠️ Online voice blocked. Tap "📱 Phone voice" or open in Chrome.</span>';
           playing=false;
         }
       };
-      audio.play().catch(err=>{
-        statusEl.innerHTML='<span class="err">⚠️ Browser blocked playback: '+err.name+'. Tap "📱 Phone voice" or open in Chrome.</span>';
-        playing=false;
-      });
     }
 
     // ---------- device engine ----------
     function playDeviceChunk(i){
       if(i>=queue.length){playing=false;progressBar.style.width='100%';statusEl.innerHTML='<span class="ok">✅ Finished.</span>';return;}
+      currentIdx=i;
       const u=new SpeechSynthesisUtterance(queue[i]);
       u.rate=parseFloat(rateEl.value);
       const chosen=deviceVoices.find(v=>v.name===voiceEl.value);
@@ -225,8 +236,7 @@
 
     function testVoice(){
       stop();
-      const phrase='Hello Frederick. This is a voice test. If you can hear me, everything is working.';
-      queue=[phrase];
+      queue=['Hello Frederick. This is a voice test. If you can hear me, everything is working.'];
       playing=true;
       progressWrap.style.display='block';
       progressBar.style.width='0%';
@@ -238,7 +248,7 @@
     }
 
     function stop(){
-      if(audio){audio.pause();audio=null;}
+      player.pause();
       if(hasSpeech) speechSynthesis.cancel();
       playing=false;
       progressWrap.style.display='none';
@@ -252,13 +262,12 @@
       statusEl.innerHTML='✨ Sample loaded — press Test voice or Listen.';
     }
 
-    // expose for inline onclick
+    // expose
     window.speak=speak; window.stop=stop; window.clearAll=clearAll;
     window.loadSample=loadSample; window.testVoice=testVoice; window.setEngine=setEngine;
 
-    // auto-diagnostics on load
     let diag='';
-    if(isInAppBrowser) diag='<span class="warn">⚠️ You seem to be in an in-app browser — sound may be blocked. Use menu → "Open in browser".</span>';
+    if(isInAppBrowser) diag='<span class="warn">⚠️ In-app browser detected — sound may be blocked. Use menu → "Open in browser".</span>';
     else if(!hasSpeech) diag='<span class="warn">⚠️ This browser has no phone voice. Use the Online voice.</span>';
     if(diag) statusEl.innerHTML=diag;
   })();
