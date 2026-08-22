@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#16a34a">
-<title>Alef's Text Reader — Phone Edition</title>
+<title>Alef's Text Reader — v3</title>
 <style>
   :root{--green:#16a34a;--green-dark:#14532d;--bg:#f6f8f6;--card:#fff;--ink:#1f2937;--muted:#6b7280;--border:#e5e7eb}
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -14,15 +14,17 @@
   .logo{width:40px;height:40px;border-radius:12px;background:var(--green);color:#fff;display:grid;place-items:center;font-size:20px;font-weight:800;flex-shrink:0}
   h1{font-size:19px;color:var(--green-dark);line-height:1.15}
   .sub{color:var(--muted);font-size:12.5px;margin-top:2px}
+  .banner{background:#fef3c7;border:1px solid #f59e0b;border-radius:10px;padding:10px 12px;font-size:13px;color:#92400e;margin-bottom:14px;line-height:1.45}
   .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
   label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px}
-  textarea{width:100%;min-height:180px;border:1px solid var(--border);border-radius:12px;padding:12px;font-size:16px;line-height:1.55;resize:vertical;font-family:inherit;color:var(--ink);background:#fdfdfd}
+  textarea{width:100%;min-height:170px;border:1px solid var(--border);border-radius:12px;padding:12px;font-size:16px;line-height:1.55;resize:vertical;font-family:inherit;color:var(--ink);background:#fdfdfd}
   textarea:focus{outline:2px solid var(--green);border-color:transparent}
   .controls{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
   button{border:none;border-radius:999px;padding:13px 18px;font-size:15px;font-weight:600;cursor:pointer;transition:transform .1s,opacity .15s;flex:1;min-width:90px}
   button:active{transform:scale(.97)}
   .btn-play{background:var(--green);color:#fff}.btn-play:hover{opacity:.9}
   .btn-stop{background:#ef4444;color:#fff}.btn-stop:hover{opacity:.9}
+  .btn-test{background:#7c3aed;color:#fff}.btn-test:hover{opacity:.9}
   .btn[disabled]{opacity:.5;cursor:wait}
   .row{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px}
   .field{flex:1;min-width:130px}
@@ -30,7 +32,7 @@
   .range-wrap{display:flex;align-items:center;gap:10px}
   .range-wrap input{flex:1;accent-color:var(--green);height:34px}
   .range-val{font-size:13px;font-weight:700;color:var(--green-dark);min-width:36px;text-align:right}
-  .status{margin-top:12px;font-size:14px;color:var(--muted);min-height:20px;word-break:break-word}
+  .status{margin-top:12px;font-size:14px;color:var(--muted);min-height:44px;word-break:break-word}
   .status .ok{color:var(--green-dark);font-weight:600}
   .status .err{color:#dc2626;font-weight:600}
   .status .warn{color:#b45309;font-weight:600}
@@ -48,22 +50,29 @@
 <div class="wrap">
   <header>
     <div class="logo">📖</div>
-    <div><h1>Alef's Text Reader</h1><div class="sub">Phone edition · always reads, even offline</div></div>
+    <div><h1>Alef's Text Reader <span style="font-size:12px;color:var(--muted)">v3</span></h1><div class="sub">Phone edition · fixed for in-app browsers</div></div>
   </header>
+
+  <div class="banner">
+    ⚠️ <b>If nothing plays:</b> open this link in <b>Chrome</b> or your normal browser —
+    <b>not inside Telegram/WhatsApp</b> (their built-in browsers block sound).
+    Menu → "Open in browser".
+  </div>
+
   <div class="card">
     <label for="text">Your text</label>
     <textarea id="text" placeholder="Paste any long text here..."></textarea>
     <div class="sample" onclick="loadSample()">✨ Try a sample — tap to load, then press Listen</div>
 
     <div class="engine-switch">
-      <button id="engDevice" class="active" onclick="setEngine('device')">📱 Phone voice (always works)</button>
-      <button id="engOnline" onclick="setEngine('online')">🌐 Online voice (premium)</button>
+      <button id="engOnline" class="active" onclick="setEngine('online')">🌐 Online voice</button>
+      <button id="engDevice" onclick="setEngine('device')">📱 Phone voice</button>
     </div>
 
     <div class="controls">
+      <button class="btn-test" onclick="testVoice()">🔊 Test voice</button>
       <button class="btn-play" id="playBtn" onclick="speak()">▶ Listen</button>
       <button class="btn-stop" onclick="stop()">■ Stop</button>
-      <button class="btn-play" style="background:#f3f4f6;color:var(--ink);border:1px solid var(--border)" onclick="clearAll()">Clear</button>
     </div>
 
     <div class="row">
@@ -81,130 +90,178 @@
     </div>
 
     <div class="progress" id="progressWrap"><div class="bar" id="progressBar"></div></div>
-    <div class="status" id="status">Ready.</div>
+    <div class="status" id="status">Ready. Tap "Test voice" first.</div>
   </div>
   <div class="foot">Made for Frederick 💚 · Add to home screen: browser menu → "Add to Home Screen"</div>
 </div>
 <script>
-  const textEl=document.getElementById('text'), voiceEl=document.getElementById('voice'),
-        rateEl=document.getElementById('rate'), rateVal=document.getElementById('rateVal'),
-        statusEl=document.getElementById('status'), playBtn=document.getElementById('playBtn'),
-        progressWrap=document.getElementById('progressWrap'), progressBar=document.getElementById('progressBar'),
-        engDevice=document.getElementById('engDevice'), engOnline=document.getElementById('engOnline');
-  let queue=[], playing=false, audio=null, engine='device';
+  (function(){
+    'use strict';
+    const $=id=>document.getElementById(id);
+    const textEl=$('text'), voiceEl=$('voice'), rateEl=$('rate'), rateVal=$('rateVal'),
+          statusEl=$('status'), playBtn=$('playBtn'),
+          progressWrap=$('progressWrap'), progressBar=$('progressBar'),
+          engOnline=$('engOnline'), engDevice=$('engDevice');
+    let queue=[], playing=false, audio=null, engine='online', deviceVoices=[];
 
-  rateEl.addEventListener('input',()=>rateVal.textContent=parseFloat(rateEl.value).toFixed(2)+'×');
+    // ---------- diagnostics ----------
+    const hasSpeech = ('speechSynthesis' in window);
+    const ua = navigator.userAgent || '';
+    const isInAppBrowser = /FBAN|FBAV|Twitter|Line|WhatsApp|Telegram/i.test(ua) && !/Chrome/i.test(ua);
 
-  // ---------- voice list ----------
-  let deviceVoices=[];
-  function refreshVoices(){
-    deviceVoices=(window.speechSynthesis?speechSynthesis.getVoices():[])||[];
-    buildVoiceList();
-  }
-  function buildVoiceList(){
-    voiceEl.innerHTML='';
-    if(engine==='device'){
-      const list=deviceVoices.length?deviceVoices:[{name:'Default voice',lang:''}];
-      list.forEach(v=>{
-        const o=document.createElement('option');
-        o.value=v.name; o.textContent=(v.name||'Default')+(v.lang?' ('+v.lang+')':'');
-        voiceEl.appendChild(o);
-      });
-    } else {
-      [['en-GB','British English'],['en-US','American English'],['en-NG','Nigerian English'],['en-AU','Australian English']].forEach(([val,label])=>{
-        const o=document.createElement('option'); o.value=val; o.textContent=label; voiceEl.appendChild(o);
+    rateEl.addEventListener('input',()=>rateVal.textContent=parseFloat(rateEl.value).toFixed(2)+'×');
+
+    // ---------- voices ----------
+    function refreshVoices(){
+      deviceVoices = hasSpeech ? (speechSynthesis.getVoices()||[]) : [];
+      buildVoiceList();
+    }
+    function buildVoiceList(){
+      voiceEl.innerHTML='';
+      if(engine==='device'){
+        const list = deviceVoices.length ? deviceVoices : [{name:'Default voice', lang:''}];
+        list.forEach(v=>{
+          const o=document.createElement('option');
+          o.value=v.name; o.textContent=(v.name||'Default')+(v.lang?' ('+v.lang+')':'');
+          voiceEl.appendChild(o);
+        });
+      } else {
+        [['en-GB','British English'],['en-US','American English'],['en-NG','Nigerian English'],['en-AU','Australian English']].forEach(([val,label])=>{
+          const o=document.createElement('option'); o.value=val; o.textContent=label; voiceEl.appendChild(o);
+        });
+      }
+    }
+    if(hasSpeech){
+      speechSynthesis.onvoiceschanged=refreshVoices;
+      refreshVoices();
+    }
+
+    function setEngine(e){
+      engine=e;
+      engOnline.classList.toggle('active',e==='online');
+      engDevice.classList.toggle('active',e==='device');
+      buildVoiceList();
+      statusEl.innerHTML = e==='online'
+        ? '🌐 Online voice selected (needs internet).'
+        : (hasSpeech ? '📱 Phone voice selected — works offline.' : '<span class="err">⚠️ This browser has no phone voice. Use Online voice or open in Chrome.</span>');
+    }
+
+    // ---------- chunking ----------
+    function chunkText(text,maxLen=180){
+      const chunks=[];
+      const sentences=text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[text];
+      let cur='';
+      for(const s of sentences){
+        if((cur+s).length>maxLen){ if(cur) chunks.push(cur.trim()); cur=s; }
+        else cur+=s;
+      }
+      if(cur.trim()) chunks.push(cur.trim());
+      return chunks;
+    }
+
+    // ---------- online engine: <audio> element, dual-host fallback ----------
+    const HOSTS=['https://translate.googleapis.com/translate_tts','https://translate.google.com/translate_tts'];
+    let hostIdx=0;
+
+    function makeAudio(text,voice){
+      const a=new Audio();
+      a.referrerPolicy='no-referrer';
+      a.src=HOSTS[hostIdx]+'?ie=UTF-8&client=gtx&tl='+voice+'&q='+encodeURIComponent(text);
+      a.playbackRate=parseFloat(rateEl.value);
+      return a;
+    }
+
+    function playOnlineChunk(i){
+      if(i>=queue.length){playing=false;progressBar.style.width='100%';statusEl.innerHTML='<span class="ok">✅ Finished.</span>';return;}
+      audio=makeAudio(queue[i], voiceEl.value);
+      progressBar.style.width=((i/queue.length)*100)+'%';
+      statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+queue.length+'…</span>';
+      audio.onended=()=>playOnlineChunk(i+1);
+      audio.onerror=()=>{
+        if(hostIdx<HOSTS.length-1){
+          hostIdx++;
+          statusEl.innerHTML='<span class="warn">⚠️ Switching voice server…</span>';
+          playOnlineChunk(i);
+        } else {
+          statusEl.innerHTML='<span class="err">⚠️ Online voice blocked on this network. Tap "📱 Phone voice" or open in Chrome.</span>';
+          playing=false;
+        }
+      };
+      audio.play().catch(err=>{
+        statusEl.innerHTML='<span class="err">⚠️ Browser blocked playback: '+err.name+'. Tap "📱 Phone voice" or open in Chrome.</span>';
+        playing=false;
       });
     }
-  }
-  if('speechSynthesis' in window){
-    speechSynthesis.onvoiceschanged=refreshVoices;
-    refreshVoices();
-  }
 
-  function setEngine(e){
-    engine=e;
-    engDevice.classList.toggle('active',e==='device');
-    engOnline.classList.toggle('active',e==='online');
-    buildVoiceList();
-    statusEl.innerHTML=e==='device'?'📱 Phone voice selected — works even offline.':'🌐 Online voice selected (needs internet).';
-  }
-
-  // ---------- chunking ----------
-  function chunkText(text,maxLen=180){
-    const chunks=[];
-    const sentences=text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[text];
-    let cur='';
-    for(const s of sentences){
-      if((cur+s).length>maxLen){ if(cur) chunks.push(cur.trim()); cur=s; }
-      else cur+=s;
+    // ---------- device engine ----------
+    function playDeviceChunk(i){
+      if(i>=queue.length){playing=false;progressBar.style.width='100%';statusEl.innerHTML='<span class="ok">✅ Finished.</span>';return;}
+      const u=new SpeechSynthesisUtterance(queue[i]);
+      u.rate=parseFloat(rateEl.value);
+      const chosen=deviceVoices.find(v=>v.name===voiceEl.value);
+      if(chosen) u.voice=chosen;
+      progressBar.style.width=((i/queue.length)*100)+'%';
+      statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+queue.length+' (phone voice)…</span>';
+      u.onend=()=>playDeviceChunk(i+1);
+      u.onerror=()=>{statusEl.innerHTML='<span class="err">⚠️ Phone voice failed in this browser.</span>';playing=false;};
+      speechSynthesis.speak(u);
     }
-    if(cur.trim()) chunks.push(cur.trim());
-    return chunks;
-  }
 
-  // ---------- device engine (offline, always works) ----------
-  function playDeviceChunk(i){
-    if(i>=queue.length){playing=false;progressBar.style.width='100%';statusEl.innerHTML='<span class="ok">✅ Finished.</span>';return;}
-    const u=new SpeechSynthesisUtterance(queue[i]);
-    u.rate=parseFloat(rateEl.value);
-    const chosen=deviceVoices.find(v=>v.name===voiceEl.value);
-    if(chosen) u.voice=chosen;
-    progressBar.style.width=((i/queue.length)*100)+'%';
-    statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+queue.length+'…</span>';
-    u.onend=()=>playDeviceChunk(i+1);
-    u.onerror=()=>{statusEl.innerHTML='<span class="err">⚠️ Phone voice failed. Try the Online voice instead.</span>';playing=false;};
-    speechSynthesis.speak(u);
-  }
+    // ---------- actions ----------
+    function speak(){
+      const raw=textEl.value.trim();
+      if(!raw){statusEl.innerHTML='<span class="err">⚠️ Paste some text first.</span>';return;}
+      stop();
+      queue=chunkText(raw);
+      if(!queue.length){statusEl.innerHTML='<span class="err">⚠️ Nothing to read.</span>';return;}
+      playing=true;
+      progressWrap.style.display='block';
+      progressBar.style.width='0%';
+      hostIdx=0;
+      if(engine==='online') playOnlineChunk(0);
+      else if(hasSpeech) playDeviceChunk(0);
+      else statusEl.innerHTML='<span class="err">⚠️ No phone voice in this browser. Switch to Online or open in Chrome.</span>';
+    }
 
-  // ---------- online engine (premium, needs internet) ----------
-  function playOnlineChunk(i){
-    if(i>=queue.length){playing=false;progressBar.style.width='100%';statusEl.innerHTML='<span class="ok">✅ Finished.</span>';return;}
-    audio=new Audio();
-    audio.referrerPolicy='no-referrer';
-    audio.src='https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl='+voiceEl.value+'&q='+encodeURIComponent(queue[i]);
-    audio.playbackRate=parseFloat(rateEl.value);
-    progressBar.style.width=((i/queue.length)*100)+'%';
-    statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+queue.length+'…</span>';
-    audio.onended=()=>playOnlineChunk(i+1);
-    audio.onerror=()=>{
-      statusEl.innerHTML='<span class="warn">⚠️ Online voice blocked on this network. Switching to Phone voice…</span>';
-      setEngine('device');
-      playDeviceChunk(0);
-    };
-    audio.play().catch(()=>{});
-  }
+    function testVoice(){
+      stop();
+      const phrase='Hello Frederick. This is a voice test. If you can hear me, everything is working.';
+      queue=[phrase];
+      playing=true;
+      progressWrap.style.display='block';
+      progressBar.style.width='0%';
+      hostIdx=0;
+      statusEl.innerHTML='<span class="ok">🔊 Testing voice…</span>';
+      if(engine==='online') playOnlineChunk(0);
+      else if(hasSpeech) playDeviceChunk(0);
+      else statusEl.innerHTML='<span class="err">⚠️ No voice available in this browser. Open the link in Chrome.</span>';
+    }
 
-  function speak(){
-    const raw=textEl.value.trim();
-    if(!raw){statusEl.innerHTML='<span class="err">⚠️ Paste some text first.</span>';return;}
-    stop();
-    queue=chunkText(raw);
-    if(!queue.length){statusEl.innerHTML='<span class="err">⚠️ Nothing to read.</span>';return;}
-    playing=true;
-    progressWrap.style.display='block';
-    progressBar.style.width='0%';
-    if(engine==='device') playDeviceChunk(0);
-    else playOnlineChunk(0);
-  }
+    function stop(){
+      if(audio){audio.pause();audio=null;}
+      if(hasSpeech) speechSynthesis.cancel();
+      playing=false;
+      progressWrap.style.display='none';
+      statusEl.innerHTML='⏹ Stopped.';
+    }
 
-  function stop(){
-    if(audio){audio.pause();audio=null;}
-    if('speechSynthesis' in window) speechSynthesis.cancel();
-    playing=false;
-    progressWrap.style.display='none';
-    statusEl.innerHTML='⏹ Stopped.';
-  }
+    function clearAll(){stop();textEl.value='';statusEl.innerHTML='Cleared.';textEl.focus();}
 
-  function clearAll(){stop();textEl.value='';statusEl.innerHTML='Cleared.';textEl.focus();}
+    function loadSample(){
+      textEl.value="Hello Frederick. This is your text reader, now working on your phone. Long articles, reports, and book chapters are easier on the ears than on the eyes. Choose your voice, adjust the speed, and press listen. Enjoy the gift of listening. This was made for you.";
+      statusEl.innerHTML='✨ Sample loaded — press Test voice or Listen.';
+    }
 
-  function loadSample(){
-    textEl.value="Hello Frederick. This is your text reader, now working on your phone with no setup at all. "+
-      "Long articles, reports, and book chapters are easier on the ears than on the eyes. "+
-      "Choose your voice, adjust the speed, and press listen. "+
-      "Add this page to your home screen and it works like an app. "+
-      "Enjoy the gift of listening. This was made for you.";
-    statusEl.innerHTML='✨ Sample loaded — press Listen.';
-  }
+    // expose for inline onclick
+    window.speak=speak; window.stop=stop; window.clearAll=clearAll;
+    window.loadSample=loadSample; window.testVoice=testVoice; window.setEngine=setEngine;
+
+    // auto-diagnostics on load
+    let diag='';
+    if(isInAppBrowser) diag='<span class="warn">⚠️ You seem to be in an in-app browser — sound may be blocked. Use menu → "Open in browser".</span>';
+    else if(!hasSpeech) diag='<span class="warn">⚠️ This browser has no phone voice. Use the Online voice.</span>';
+    if(diag) statusEl.innerHTML=diag;
+  })();
 </script>
 </body>
 </html>
