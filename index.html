@@ -39,32 +39,37 @@
   .foot{text-align:center;color:var(--muted);font-size:12px;margin-top:16px}
   .progress{height:4px;background:var(--border);border-radius:2px;margin-top:10px;overflow:hidden;display:none}
   .progress .bar{height:100%;background:var(--green);width:0%;transition:width .3s}
+  .engine-switch{display:flex;gap:8px;margin-top:12px}
+  .engine-switch button{flex:1;background:#f3f4f6;color:var(--ink);border:1px solid var(--border);font-size:13px;padding:10px}
+  .engine-switch button.active{background:var(--green);color:#fff;border-color:var(--green)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <div class="logo">📖</div>
-    <div><h1>Alef's Text Reader</h1><div class="sub">Phone edition · works anywhere, no setup</div></div>
+    <div><h1>Alef's Text Reader</h1><div class="sub">Phone edition · always reads, even offline</div></div>
   </header>
   <div class="card">
     <label for="text">Your text</label>
     <textarea id="text" placeholder="Paste any long text here..."></textarea>
     <div class="sample" onclick="loadSample()">✨ Try a sample — tap to load, then press Listen</div>
+
+    <div class="engine-switch">
+      <button id="engDevice" class="active" onclick="setEngine('device')">📱 Phone voice (always works)</button>
+      <button id="engOnline" onclick="setEngine('online')">🌐 Online voice (premium)</button>
+    </div>
+
     <div class="controls">
       <button class="btn-play" id="playBtn" onclick="speak()">▶ Listen</button>
       <button class="btn-stop" onclick="stop()">■ Stop</button>
       <button class="btn-play" style="background:#f3f4f6;color:var(--ink);border:1px solid var(--border)" onclick="clearAll()">Clear</button>
     </div>
+
     <div class="row">
       <div class="field">
         <label for="voice">Voice</label>
-        <select id="voice">
-          <option value="en-GB">British English</option>
-          <option value="en-US">American English</option>
-          <option value="en-NG">Nigerian English</option>
-          <option value="en-AU">Australian English</option>
-        </select>
+        <select id="voice"></select>
       </div>
       <div class="field">
         <label for="rate">Speed</label>
@@ -74,6 +79,7 @@
         </div>
       </div>
     </div>
+
     <div class="progress" id="progressWrap"><div class="bar" id="progressBar"></div></div>
     <div class="status" id="status">Ready.</div>
   </div>
@@ -83,11 +89,47 @@
   const textEl=document.getElementById('text'), voiceEl=document.getElementById('voice'),
         rateEl=document.getElementById('rate'), rateVal=document.getElementById('rateVal'),
         statusEl=document.getElementById('status'), playBtn=document.getElementById('playBtn'),
-        progressWrap=document.getElementById('progressWrap'), progressBar=document.getElementById('progressBar');
-  let queue=[], playing=false, audio=null, engine='google';
+        progressWrap=document.getElementById('progressWrap'), progressBar=document.getElementById('progressBar'),
+        engDevice=document.getElementById('engDevice'), engOnline=document.getElementById('engOnline');
+  let queue=[], playing=false, audio=null, engine='device';
 
   rateEl.addEventListener('input',()=>rateVal.textContent=parseFloat(rateEl.value).toFixed(2)+'×');
 
+  // ---------- voice list ----------
+  let deviceVoices=[];
+  function refreshVoices(){
+    deviceVoices=(window.speechSynthesis?speechSynthesis.getVoices():[])||[];
+    buildVoiceList();
+  }
+  function buildVoiceList(){
+    voiceEl.innerHTML='';
+    if(engine==='device'){
+      const list=deviceVoices.length?deviceVoices:[{name:'Default voice',lang:''}];
+      list.forEach(v=>{
+        const o=document.createElement('option');
+        o.value=v.name; o.textContent=(v.name||'Default')+(v.lang?' ('+v.lang+')':'');
+        voiceEl.appendChild(o);
+      });
+    } else {
+      [['en-GB','British English'],['en-US','American English'],['en-NG','Nigerian English'],['en-AU','Australian English']].forEach(([val,label])=>{
+        const o=document.createElement('option'); o.value=val; o.textContent=label; voiceEl.appendChild(o);
+      });
+    }
+  }
+  if('speechSynthesis' in window){
+    speechSynthesis.onvoiceschanged=refreshVoices;
+    refreshVoices();
+  }
+
+  function setEngine(e){
+    engine=e;
+    engDevice.classList.toggle('active',e==='device');
+    engOnline.classList.toggle('active',e==='online');
+    buildVoiceList();
+    statusEl.innerHTML=e==='device'?'📱 Phone voice selected — works even offline.':'🌐 Online voice selected (needs internet).';
+  }
+
+  // ---------- chunking ----------
   function chunkText(text,maxLen=180){
     const chunks=[];
     const sentences=text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[text];
@@ -100,48 +142,36 @@
     return chunks;
   }
 
-  function googleTtsUrl(text,voice){
-    // 'tw-ob' client works from browsers; no-referrer policy on <audio> avoids rejection
-    return 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl='+voice+
-           '&q='+encodeURIComponent(text);
+  // ---------- device engine (offline, always works) ----------
+  function playDeviceChunk(i){
+    if(i>=queue.length){playing=false;progressBar.style.width='100%';statusEl.innerHTML='<span class="ok">✅ Finished.</span>';return;}
+    const u=new SpeechSynthesisUtterance(queue[i]);
+    u.rate=parseFloat(rateEl.value);
+    const chosen=deviceVoices.find(v=>v.name===voiceEl.value);
+    if(chosen) u.voice=chosen;
+    progressBar.style.width=((i/queue.length)*100)+'%';
+    statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+queue.length+'…</span>';
+    u.onend=()=>playDeviceChunk(i+1);
+    u.onerror=()=>{statusEl.innerHTML='<span class="err">⚠️ Phone voice failed. Try the Online voice instead.</span>';playing=false;};
+    speechSynthesis.speak(u);
   }
 
-  function playChunk(i){
-    if(i>=queue.length){ playing=false; progressBar.style.width='100%'; statusEl.innerHTML='<span class="ok">✅ Finished.</span>'; return; }
+  // ---------- online engine (premium, needs internet) ----------
+  function playOnlineChunk(i){
+    if(i>=queue.length){playing=false;progressBar.style.width='100%';statusEl.innerHTML='<span class="ok">✅ Finished.</span>';return;}
     audio=new Audio();
-    // KEY FIX: suppress the referrer so Google's free voice accepts the request
     audio.referrerPolicy='no-referrer';
-    audio.src=googleTtsUrl(queue[i],voiceEl.value);
+    audio.src='https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl='+voiceEl.value+'&q='+encodeURIComponent(queue[i]);
     audio.playbackRate=parseFloat(rateEl.value);
     progressBar.style.width=((i/queue.length)*100)+'%';
     statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+queue.length+'…</span>';
-    audio.onended=()=>playChunk(i+1);
+    audio.onended=()=>playOnlineChunk(i+1);
     audio.onerror=()=>{
-      if(engine==='google'){
-        // fallback: try the device's own voices (Web Speech API) — always works offline
-        engine='device';
-        statusEl.innerHTML='<span class="warn">⚠️ Online voice blocked — switching to phone voices.</span>';
-        playDevice(queue,0);
-      } else {
-        statusEl.innerHTML='<span class="err">⚠️ Could not play audio. Try again or check connection.</span>';
-        playing=false;
-      }
+      statusEl.innerHTML='<span class="warn">⚠️ Online voice blocked on this network. Switching to Phone voice…</span>';
+      setEngine('device');
+      playDeviceChunk(0);
     };
     audio.play().catch(()=>{});
-  }
-
-  function playDevice(chunks,i){
-    if(i>=chunks.length){playing=false;statusEl.innerHTML='<span class="ok">✅ Finished.</span>';return;}
-    if(!('speechSynthesis' in window)){statusEl.innerHTML='<span class="err">⚠️ No voice available on this phone.</span>';playing=false;return;}
-    const u=new SpeechSynthesisUtterance(chunks[i]);
-    u.rate=parseFloat(rateEl.value);
-    const lang=voiceEl.value;
-    const v=speechSynthesis.getVoices().find(x=>x.lang&&x.lang.toLowerCase().startsWith(lang));
-    if(v)u.voice=v;
-    progressBar.style.width=((i/chunks.length)*100)+'%';
-    statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+chunks.length+' (phone voice)…</span>';
-    u.onend=()=>playDevice(chunks,i+1);
-    speechSynthesis.speak(u);
   }
 
   function speak(){
@@ -150,10 +180,11 @@
     stop();
     queue=chunkText(raw);
     if(!queue.length){statusEl.innerHTML='<span class="err">⚠️ Nothing to read.</span>';return;}
-    playing=true; engine='google';
+    playing=true;
     progressWrap.style.display='block';
     progressBar.style.width='0%';
-    playChunk(0);
+    if(engine==='device') playDeviceChunk(0);
+    else playOnlineChunk(0);
   }
 
   function stop(){
