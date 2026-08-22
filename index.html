@@ -133,7 +133,8 @@
           voiceEl.appendChild(o);
         });
       } else {
-        [['en-GB','British English'],['en-US','American English'],['en-NG','Nigerian English'],['en-AU','Australian English']].forEach(([val,label])=>{
+        // online: relay voice keys (real neural voices)
+        [['ryan','Ryan — British male (default)'],['usa-m','Guy — American male'],['usa-f','Jenny — American female']].forEach(([val,label])=>{
           const o=document.createElement('option'); o.value=val; o.textContent=label; voiceEl.appendChild(o);
         });
       }
@@ -166,13 +167,28 @@
     }
 
     // ---------- online engine: DOM-attached <audio> + visible player ----------
-    const HOSTS=['https://translate.googleapis.com/translate_tts','https://translate.google.com/translate_tts'];
+    // PRIMARY: our own relay (real Ryan voice, hosted by Alef)
+    // FALLBACK: Google TTS hosts (if relay unreachable)
+    const RELAY='https://meetup-rendering-silicon-sam.trycloudflare.com';
+    const RELAY_KEY='alef-frederick-2026';
+    const HOSTS=[
+      RELAY+'/tts?key='+RELAY_KEY+'&voice=${voice}&rate=${rate}&text=',
+      'https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=',
+      'https://translate.google.com/translate_tts?ie=UTF-8&client=gtx&tl='
+    ];
     let hostIdx=0;
 
     function setPlayerSrc(text,voice){
       playerWrap.style.display='block';
-      player.src=HOSTS[hostIdx]+'?ie=UTF-8&client=gtx&tl='+voice+'&q='+encodeURIComponent(text);
-      player.playbackRate=parseFloat(rateEl.value);
+      const rate=parseFloat(rateEl.value);
+      if(hostIdx===0){
+        // relay: text is a plain query param
+        player.src=RELAY+'/tts?key='+RELAY_KEY+'&voice='+voice+'&rate='+rate+'&text='+encodeURIComponent(text);
+      } else {
+        // google: voice is the language code
+        player.src=HOSTS[hostIdx]+voice+'&q='+encodeURIComponent(text);
+      }
+      player.playbackRate=rate;
     }
 
     function playOnlineChunk(i){
