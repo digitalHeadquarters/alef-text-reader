@@ -314,13 +314,17 @@
       player.playbackRate=rate;
     }
 
-    // build the URL for a given chunk
+    // build the URL for a given chunk — each host speaks a different voice dialect
+    const GOOGLE_VOICE={ryan:'en-GB', 'usa-m':'en-US', 'usa-f':'en-US'};
     function chunkUrl(text,voice){
       const rate=parseFloat(rateEl.value);
       if(hostIdx===0){
+        // relay: real neural voices (ryan / usa-m / usa-f)
         return RELAY+'/tts?key='+RELAY_KEY+'&voice='+voice+'&rate='+rate+'&text='+encodeURIComponent(text);
       }
-      return HOSTS[hostIdx]+voice+'&q='+encodeURIComponent(text);
+      // google hosts: language codes (en-GB / en-US)
+      const gl=GOOGLE_VOICE[voice]||'en-GB';
+      return HOSTS[hostIdx]+gl+'&q='+encodeURIComponent(text);
     }
 
     function playOnlineChunk(i){
