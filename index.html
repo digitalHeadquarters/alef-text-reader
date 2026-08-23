@@ -77,6 +77,16 @@
       <button class="btn-stop" onclick="stop()">■ Stop</button>
     </div>
 
+    <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <button class="btn-ghost" style="flex:0 1 auto;min-width:0" onclick="document.getElementById('fileInput').click()">📎 Upload file</button>
+      <input type="file" id="fileInput" accept=".md,.txt,.docx,text/markdown,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none">
+      <span id="fileName" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+    <div style="margin-top:8px;font-size:12px;color:var(--muted);line-height:1.45">
+      📎 Upload <b>.md</b> (Markdown), <b>.txt</b>, or <b>.docx</b> (Word).<br>
+      📄 Google Docs: open the doc → <b>File → Download → Microsoft Word (.docx)</b> → upload here.
+    </div>
+
     <div class="row">
       <div class="field">
         <label for="voice">Voice</label>
@@ -277,6 +287,82 @@
       textEl.value="Hello Frederick. This is your text reader, now working on your phone. Long articles, reports, and book chapters are easier on the ears than on the eyes. Choose your voice, adjust the speed, and press listen. Enjoy the gift of listening. This was made for you.";
       statusEl.innerHTML='✨ Sample loaded — press Test voice or Listen.';
     }
+
+    // ---------- file upload: .md / .txt / .docx ----------
+    function cleanMarkdown(md){
+      return md
+        .replace(/```[\s\S]*?```/g,' ')          // code blocks
+        .replace(/`([^`]*)`/g,'$1')               // inline code
+        .replace(/!\[([^\]]*)\]\([^)]*\)/g,' ')   // images
+        .replace(/\[([^\]]*)\]\([^)]*\)/g,'$1')   // links -> keep text
+        .replace(/^#{1,6}\s*/gm,'')               // headings
+        .replace(/^>\s?/gm,'')                    // blockquotes
+        .replace(/^\s*[-*+]\s+/gm,'')             // bullet lists
+        .replace(/^\s*\d+\.\s+/gm,'')             // numbered lists
+        .replace(/^[-*_]{3,}\s*$/gm,'')           // hr lines
+        .replace(/\*\*([^*]+)\*\*/g,'$1')         // bold
+        .replace(/\*([^*]+)\*/g,'$1')             // italic
+        .replace(/__([^_]+)__/g,'$1')             // bold alt
+        .replace(/_([^_]+)_/g,'$1')               // italic alt
+        .replace(/~~([^~]+)~~/g,'$1')             // strikethrough
+        .replace(/\|/g,' ')                       // table pipes
+        .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'")
+        .replace(/[ \t]+/g,' ')
+        .replace(/\n{3,}/g,'\n\n')
+        .trim();
+    }
+
+    function handleFile(file){
+      const name=file.name||'file';
+      const isDocx=/\.docx$/i.test(name);
+      const isMarkdown=/\.md$/i.test(name)||/\.markdown$/i.test(name);
+      const isText=/\.txt$/i.test(name)||/text\/plain/.test(file.type)||/\.text$/i.test(name);
+      const fnEl=$('fileName');
+
+      if(isDocx){
+        // parse .docx using mammoth from CDN
+        const script=document.createElement('script');
+        script.src='https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js';
+        script.onload=()=>{
+          const reader=new FileReader();
+          reader.onload=()=>{
+            mammoth.extractRawText({arrayBuffer:reader.result})
+              .then(res=>{
+                const txt=(res.value||'').trim();
+                if(!txt){statusEl.innerHTML='<span class="err">⚠️ No text found in the Word document.</span>';return;}
+                textEl.value=txt;
+                fnEl.textContent='📄 '+name+' loaded ('+txt.length+' chars)';
+                statusEl.innerHTML='<span class="ok">✅ Word document loaded — press Listen.</span>';
+              })
+              .catch(()=>{statusEl.innerHTML='<span class="err">⚠️ Could not read this Word document.</span>';});
+          };
+          reader.readAsArrayBuffer(file);
+        };
+        script.onerror=()=>{statusEl.innerHTML='<span class="err">⚠️ Could not load the Word reader (need internet). Download the doc as .txt instead.</span>';};
+        document.body.appendChild(script);
+        statusEl.innerHTML='⏳ Reading Word document…';
+        return;
+      }
+
+      const reader=new FileReader();
+      reader.onload=()=>{
+        let txt=String(reader.result||'');
+        if(isMarkdown) txt=cleanMarkdown(txt);
+        txt=txt.trim();
+        if(!txt){statusEl.innerHTML='<span class="err">⚠️ No text found in the file.</span>';return;}
+        textEl.value=txt;
+        fnEl.textContent='📄 '+name+' loaded ('+txt.length+' chars)';
+        statusEl.innerHTML='<span class="ok">✅ '+(isMarkdown?'Markdown':'File')+' loaded — press Listen.</span>';
+      };
+      reader.onerror=()=>{statusEl.innerHTML='<span class="err">⚠️ Could not read the file.</span>';};
+      reader.readAsText(file);
+    }
+
+    document.getElementById('fileInput').addEventListener('change',(e)=>{
+      const f=e.target.files&&e.target.files[0];
+      if(f) handleFile(f);
+      e.target.value='';
+    });
 
     // expose
     window.speak=speak; window.stop=stop; window.clearAll=clearAll;
