@@ -259,31 +259,59 @@
       statusEl.innerHTML='<span class="ok">✅ Saved for 7 days. Tap 📂 at top to restore later.</span>';
     };
 
-    // ---------- full audio download (whole piece, one MP3) ----------
+    // ---------- full audio download: fetch each chunk (cached) and stitch into one MP3 ----------
     window.downloadAudio=function(){
       const t=textEl.value.trim();
       if(!t){statusEl.innerHTML='<span class="err">⚠️ Paste or upload text first.</span>';return;}
       if(engine!=='online'){statusEl.innerHTML='<span class="warn">⚠️ Full audio uses the Online voice — switch to 🌐 Online first.</span>';return;}
       const btn=$('dlBtn');
-      btn.disabled=true; btn.textContent='⏳ Generating…';
-      statusEl.innerHTML='⏳ Building full audio ('+fmt(estSeconds(t))+' expected)…';
+      btn.disabled=true; btn.textContent='⏳ Preparing…';
+      statusEl.innerHTML='⏳ Preparing audio chunks…';
+      // reuse the same chunking pipeline as playback
+      const norm=t
+        .replace(/\r\n?/g,'\n')
+        .replace(/\n\s*\n+/g,'\n')
+        .replace(/([^.!?])\n+/g,'$1. ')
+        .replace(/([.!?])\n+/g,'$1 ')
+        .replace(/[ \t]+/g,' ')
+        .trim();
+      const chunks=chunkText(norm,400);
       const RELAY='https://meetup-rendering-silicon-sam.trycloudflare.com';
-      fetch(RELAY+'/tts',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({key:'alef-frederick-2026', voice:voiceEl.value, rate:parseFloat(rateEl.value), text:t})
-      }).then(r=>{
-        if(!r.ok) throw new Error('server '+r.status);
-        return r.blob();
-      }).then(blob=>{
-        const a=document.createElement('a');
-        a.href=URL.createObjectURL(blob);
-        a.download='alef-reader-audio.mp3';
-        document.body.appendChild(a); a.click(); a.remove();
-        statusEl.innerHTML='<span class="ok">✅ Full audio downloaded.</span>';
-      }).catch(err=>{
-        statusEl.innerHTML='<span class="err">⚠️ Could not generate: '+err.message+'. Check connection.</span>';
-      }).finally(()=>{ btn.disabled=false; btn.textContent='⬇️ Full audio'; });
+      const KEY='alef-frederick-2026';
+      const voice=voiceEl.value, rate=parseFloat(rateEl.value);
+      const parts=[];
+      let done=0;
+      statusEl.innerHTML='⏳ Downloading audio 0/'+chunks.length+'…';
+      const next=async(i)=>{
+        if(i>=chunks.length){
+          // all fetched -> stitch into one blob and download
+          const blob=new Blob(parts,{type:'audio/mpeg'});
+          const a=document.createElement('a');
+          a.href=URL.createObjectURL(blob);
+          a.download='alef-reader-audio.mp3';
+          document.body.appendChild(a); a.click(); a.remove();
+          statusEl.innerHTML='<span class="ok">✅ Full audio downloaded ('+fmt(estSeconds(norm))+' of listening).</span>';
+          btn.disabled=false; btn.textContent='⬇️ Full audio';
+          return;
+        }
+        try{
+          const url=RELAY+'/tts?key='+KEY+'&voice='+voice+'&rate='+rate+'&text='+encodeURIComponent(chunks[i]);
+          const r=await fetch(url);
+          if(!r.ok) throw new Error('HTTP '+r.status);
+          parts.push(await r.blob());
+        }catch(e){
+          // keep going even if one chunk fails (skip it)
+        }
+        done=i+1;
+        if(done%5===0||done===chunks.length){
+          statusEl.innerHTML='⏳ Downloading audio '+done+'/'+chunks.length+'…';
+        }
+        await next(i+1);
+      };
+      next(0).catch(()=>{
+        statusEl.innerHTML='<span class="err">⚠️ Download failed — check connection and retry.</span>';
+        btn.disabled=false; btn.textContent='⬇️ Full audio';
+      });
     };
 
     // ---------- chunking + timer ----------
