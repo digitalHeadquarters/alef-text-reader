@@ -270,10 +270,15 @@
 
     // ---------- chunking + timer ----------
     function prepQueue(text){
+      // NO newline pauses: convert line breaks to sentence-boundary spaces.
+      // Only real punctuation (. ! ?) creates pauses — short and even throughout.
       const normalized=text
         .replace(/\r\n?/g,'\n')
-        .replace(/\n\s*\n+/g,'\n')   // paragraph pauses -> single
-        .replace(/[ \t]+/g,' ');
+        .replace(/\n\s*\n+/g,'\n')
+        .replace(/([^.!?])\n+/g,'$1. ')   // line break without punctuation -> period + space
+        .replace(/([.!?])\n+/g,'$1 ')     // line break after punctuation -> just space
+        .replace(/[ \t]+/g,' ')
+        .trim();
       queue=chunkText(normalized);
       totalEstSec=estSeconds(normalized);
       elapsedSec=0; lastTick=Date.now();
@@ -309,12 +314,36 @@
       player.playbackRate=rate;
     }
 
+    // build the URL for a given chunk (shared by player + preloader)
+    function chunkUrl(text,voice){
+      const rate=parseFloat(rateEl.value);
+      if(hostIdx===0){
+        return RELAY+'/tts?key='+RELAY_KEY+'&voice='+voice+'&rate='+rate+'&text='+encodeURIComponent(text);
+      }
+      return HOSTS[hostIdx]+voice+'&q='+encodeURIComponent(text);
+    }
+
+    // preload the next chunk while the current one plays -> no gap between chunks
+    let preloader=null;
+    function preloadNext(i){
+      if(i+1>=queue.length) return;
+      try{
+        preloader=new Audio();
+        preloader.referrerPolicy='no-referrer';
+        preloader.preload='auto';
+        preloader.src=chunkUrl(queue[i+1], voiceEl.value);
+      }catch(e){}
+    }
+
     function playOnlineChunk(i){
       if(i>=queue.length){playing=false;progressBar.style.width='100%';statusEl.innerHTML='<span class="ok">✅ Finished.</span>';timerEl.textContent='⏱ '+fmt(totalEstSec)+' / '+fmt(totalEstSec)+' · 100%';return;}
       currentIdx=i;
-      setPlayerSrc(queue[i], voiceEl.value);
+      playerWrap.style.display='block';
+      player.src=preloader && preloader.src && preloader.src.length>20 ? preloader.src : chunkUrl(queue[i], voiceEl.value);
+      player.playbackRate=parseFloat(rateEl.value);
       progressBar.style.width=((i/queue.length)*100)+'%';
       statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+queue.length+'…</span>';
+      preloadNext(i); // fetch the following chunk now
       const p = player.play();
       if(p && p.catch){
         p.catch(()=>{
@@ -326,6 +355,7 @@
       player.onerror=()=>{
         if(hostIdx<HOSTS.length-1){
           hostIdx++;
+          preloader=null;
           statusEl.innerHTML='<span class="warn">⚠️ Switching voice server…</span>';
           playOnlineChunk(i);
         } else {
