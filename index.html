@@ -103,11 +103,11 @@
       <button class="btn-ghost" style="flex:0 1 auto;min-width:0" onclick="document.getElementById('fileInput').click()">📎 Upload file</button>
       <button class="btn-ghost" style="flex:0 1 auto;min-width:0" id="saveBtn" onclick="saveCurrent()">💾 Save</button>
       <button class="btn-ghost" style="flex:0 1 auto;min-width:0" id="dlBtn" onclick="downloadAudio()">⬇️ Full audio</button>
-      <input type="file" id="fileInput" accept=".md,.txt,.docx,text/markdown,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none">
+      <input type="file" id="fileInput" accept=".md,.txt,.docx,.pdf,text/markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="display:none">
       <span id="fileName" style="font-size:13px;color:var(--muted)"></span>
     </div>
     <div style="margin-top:8px;font-size:12px;color:var(--muted);line-height:1.45">
-      📎 Upload <b>.md</b> (Markdown), <b>.txt</b>, or <b>.docx</b> (Word).<br>
+      📎 Upload <b>.md</b> (Markdown), <b>.txt</b>, <b>.docx</b> (Word), or <b>.pdf</b>.<br>
       📄 Google Docs: open the doc → <b>File → Download → Microsoft Word (.docx)</b> → upload here.<br>
       💾 Your uploaded text is kept for 7 days — tap 📂 at the top to restore it. ⬇️ Full audio makes one MP3 of the whole piece.
     </div>
@@ -571,8 +571,44 @@
     function handleFile(file){
       const name=file.name||'file';
       const isDocx=/\.docx$/i.test(name);
+      const isPdf=/\.pdf$/i.test(name)||file.type==='application/pdf';
       const isMarkdown=/\.md$/i.test(name)||/\.markdown$/i.test(name);
       const fnEl=$('fileName');
+
+      if(isPdf){
+        // parse .pdf using pdf.js from CDN
+        const script=document.createElement('script');
+        script.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        script.onload=()=>{
+          const workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+          if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc=workerSrc;
+          const reader=new FileReader();
+          reader.onload=()=>{
+            const data=reader.result;
+            (pdfjsLib.getDocument({data}).promise)
+              .then(async (pdf)=>{
+                let full='';
+                for(let p=1;p<=pdf.numPages;p++){
+                  const page=await pdf.getPage(p);
+                  const tc=await page.getTextContent();
+                  full+=tc.items.map(it=>it.str||'').join(' ')+'\n';
+                }
+                full=full.trim();
+                if(!full){statusEl.innerHTML='<span class="err">⚠️ No text found in this PDF (it may be scanned images, not text).</span>';return;}
+                textEl.value=full;
+                saveToStore(full);
+                fnEl.textContent='📄 '+name+' loaded ('+pdf.numPages+' pages, '+full.length+' chars)';
+                statusEl.innerHTML='<span class="ok">✅ PDF loaded — press Listen.</span>';
+              })
+              .catch(()=>{statusEl.innerHTML='<span class="err">⚠️ Could not read this PDF.</span>';});
+          };
+          reader.readAsArrayBuffer(file);
+        };
+        script.onerror=()=>{statusEl.innerHTML='<span class="err">⚠️ Could not load the PDF reader (need internet).</span>';};
+        document.body.appendChild(script);
+        statusEl.innerHTML='⏳ Reading PDF…';
+        return;
+      }
 
       if(isDocx){
         const script=document.createElement('script');
