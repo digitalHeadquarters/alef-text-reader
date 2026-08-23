@@ -314,7 +314,7 @@
       player.playbackRate=rate;
     }
 
-    // build the URL for a given chunk (shared by player + preloader)
+    // build the URL for a given chunk
     function chunkUrl(text,voice){
       const rate=parseFloat(rateEl.value);
       if(hostIdx===0){
@@ -323,39 +323,22 @@
       return HOSTS[hostIdx]+voice+'&q='+encodeURIComponent(text);
     }
 
-    // preload the next chunk while the current one plays -> no gap between chunks
-    let preloader=null;
-    function preloadNext(i){
-      if(i+1>=queue.length) return;
-      try{
-        preloader=new Audio();
-        preloader.referrerPolicy='no-referrer';
-        preloader.preload='auto';
-        preloader.src=chunkUrl(queue[i+1], voiceEl.value);
-      }catch(e){}
-    }
-
     function playOnlineChunk(i){
+      if(!playing) return;
       if(i>=queue.length){playing=false;progressBar.style.width='100%';statusEl.innerHTML='<span class="ok">✅ Finished.</span>';timerEl.textContent='⏱ '+fmt(totalEstSec)+' / '+fmt(totalEstSec)+' · 100%';return;}
       currentIdx=i;
       playerWrap.style.display='block';
-      player.src=preloader && preloader.src && preloader.src.length>20 ? preloader.src : chunkUrl(queue[i], voiceEl.value);
+      player.src=chunkUrl(queue[i], voiceEl.value);
       player.playbackRate=parseFloat(rateEl.value);
       progressBar.style.width=((i/queue.length)*100)+'%';
       statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+queue.length+'…</span>';
-      preloadNext(i); // fetch the following chunk now
-      const p = player.play();
-      if(p && p.catch){
-        p.catch(()=>{
-          statusEl.innerHTML='<span class="warn">⚠️ Auto-play blocked — press the ▶ on the player below.</span>';
-          playing=false;
-        });
-      }
-      player.onended=()=>playOnlineChunk(i+1);
+      // clear old handlers before setting new ones (prevents double-fire loops)
+      player.onended=null;
+      player.onerror=null;
+      player.onended=()=>{ if(playing) playOnlineChunk(i+1); };
       player.onerror=()=>{
         if(hostIdx<HOSTS.length-1){
           hostIdx++;
-          preloader=null;
           statusEl.innerHTML='<span class="warn">⚠️ Switching voice server…</span>';
           playOnlineChunk(i);
         } else {
@@ -363,6 +346,14 @@
           playing=false;
         }
       };
+      const p=player.play();
+      if(p&&p.catch){
+        p.catch(()=>{
+          if(!playing) return;
+          statusEl.innerHTML='<span class="warn">⚠️ Auto-play blocked — press the ▶ on the player below.</span>';
+          playing=false;
+        });
+      }
     }
 
     // ---------- device engine ----------
