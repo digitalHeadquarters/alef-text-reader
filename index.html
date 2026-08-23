@@ -46,6 +46,13 @@
   .foot{text-align:center;color:var(--muted);font-size:12px;margin-top:16px}
   .progress{height:4px;background:var(--border);border-radius:2px;margin-top:10px;overflow:hidden;display:none}
   .progress .bar{height:100%;background:var(--green);width:0%;transition:width .3s}
+  .scrub-wrap{margin-top:12px;display:none}
+  .scrub-wrap input[type=range]{width:100%;height:34px;accent-color:var(--green);cursor:pointer;-webkit-appearance:none;appearance:none;background:transparent}
+  .scrub-wrap input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--border)}
+  .scrub-wrap input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--green);margin-top:-7px;border:3px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .scrub-wrap input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:var(--border)}
+  .scrub-wrap input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--green);border:3px solid #fff}
+  .scrub-times{display:flex;justify-content:space-between;font-size:13px;font-weight:700;color:var(--green-dark);margin-top:4px}
   .engine-switch{display:flex;gap:8px;margin-top:12px}
   .engine-switch button{flex:1;background:#f3f4f6;color:var(--ink);border:1px solid var(--border);font-size:13px;padding:10px}
   .engine-switch button.active{background:var(--green);color:#fff;border-color:var(--green)}
@@ -120,6 +127,10 @@
     </div>
 
     <div class="timer" id="timerEl"></div>
+    <div class="scrub-wrap" id="scrubWrap">
+      <input type="range" id="scrub" min="0" max="1000" value="0" step="1">
+      <div class="scrub-times"><span id="scrubCur">0:00</span><span id="scrubTot">0:00</span></div>
+    </div>
     <div class="progress" id="progressWrap"><div class="bar" id="progressBar"></div></div>
     <div class="status" id="status">Ready. Tap "Test" first.</div>
     <div id="playerWrap">
@@ -297,8 +308,77 @@
       const now=Date.now();
       elapsedSec+=(now-lastTick)/1000; lastTick=now;
       timerEl.textContent='⏱ '+fmt(elapsedSec)+' / '+fmt(totalEstSec)+' · '+Math.min(100,Math.round(elapsedSec/totalEstSec*100))+'%';
+      // move the scrubber with playback (unless user is dragging)
+      if(!scrubDragging){
+        scrub.value=Math.round(Math.min(1,elapsedSec/Math.max(1,totalEstSec))*1000);
+        scrubCur.textContent=fmt(elapsedSec);
+      }
     }
     setInterval(tickTimer,1000);
+
+    // ---------- timeline: map time <-> chunk for the draggable scrubber ----------
+    let chunkStarts=[], scrubDragging=false;
+    function buildTimeline(){
+      // estimated start time (seconds) of each chunk, cumulative
+      chunkStarts=[0];
+      let acc=0;
+      for(let k=0;k<queue.length;k++){
+        acc+=estSeconds(queue[k]);
+        chunkStarts.push(acc);
+      }
+      scrubWrap.style.display='block';
+      scrubTot.textContent=fmt(totalEstSec);
+      scrub.value=0;
+      scrubCur.textContent='0:00';
+    }
+    function chunkAtTime(sec){
+      // find chunk index containing `sec`
+      if(sec<=0) return {idx:0, offset:0};
+      for(let k=0;k<queue.length;k++){
+        if(sec>=chunkStarts[k] && sec<chunkStarts[k+1]) return {idx:k, offset:sec-chunkStarts[k]};
+      }
+      return {idx:queue.length-1, offset:0};
+    }
+    function seekTo(sec){
+      if(!queue.length) return;
+      sec=Math.max(0,Math.min(totalEstSec||sec,sec));
+      const {idx,offset}=chunkAtTime(sec);
+      elapsedSec=sec; lastTick=Date.now();
+      timerEl.textContent='⏱ '+fmt(elapsedSec)+' / '+fmt(totalEstSec)+' · '+Math.min(100,Math.round(elapsedSec/totalEstSec*100))+'%';
+      scrub.value=Math.round(Math.min(1,sec/Math.max(1,totalEstSec))*1000);
+      scrubCur.textContent=fmt(sec);
+      if(!playing) return;
+      if(engine==='online'){
+        playOnlineChunk(idx);
+        // seek within the chunk once loaded (approximate, ±1 chunk)
+        if(offset>1){
+          const trySeek=()=>{
+            if(player.duration&&isFinite(player.duration)&&offset<player.duration){
+              try{player.currentTime=offset;}catch(e){}
+            }
+          };
+          player.onloadedmetadata=trySeek;
+          setTimeout(trySeek,600);
+        }
+      } else if(hasSpeech){
+        speechSynthesis.cancel();
+        playDeviceChunk(idx);
+      }
+    }
+    // scrubber events
+    const scrub=$('scrub'), scrubCur=$('scrubCur'), scrubTot=$('scrubTot'), scrubWrap=$('scrubWrap');
+    scrub.addEventListener('input',()=>{
+      scrubDragging=true;
+      const sec=scrub.value/1000*(totalEstSec||1);
+      scrubCur.textContent=fmt(sec);
+    });
+    scrub.addEventListener('change',()=>{
+      scrubDragging=false;
+      const sec=scrub.value/1000*(totalEstSec||1);
+      seekTo(sec);
+    });
+    scrub.addEventListener('touchend',()=>{ scrubDragging=false; });
+    scrub.addEventListener('pointerup',()=>{ scrubDragging=false; });
 
     // ---------- online engine: relay-only (Google fallback removed — it
     // fragmented chunks and caused the jumping) ----------
@@ -383,26 +463,8 @@
     // ---------- skip ----------
     window.skip=function(delta){
       if(!playing||!queue.length) return;
-      // device engine: can't seek — restart current chunk from 0 on backward, next on forward
-      if(engine==='device'){
-        speechSynthesis.cancel();
-        if(delta>0){ playDeviceChunk(Math.min(queue.length-1,currentIdx+1)); }
-        else { playDeviceChunk(currentIdx); }
-        return;
-      }
-      // online: seek within current chunk if enough room, else jump chunks
-      if(player.duration && isFinite(player.duration)){
-        const newT=player.currentTime+delta;
-        if(newT>=0 && newT<player.duration-0.3){
-          player.currentTime=newT;
-          return;
-        }
-      }
-      if(delta>0){
-        if(currentIdx+1<queue.length) playOnlineChunk(currentIdx+1);
-      } else {
-        if(currentIdx>0) playOnlineChunk(currentIdx-1);
-      }
+      // use the timeline for precise jumps: current position + delta
+      seekTo(elapsedSec+delta);
     };
 
     // ---------- actions ----------
@@ -413,6 +475,7 @@
       const n=prepQueue(raw);
       if(!n){statusEl.innerHTML='<span class="err">⚠️ Nothing to read.</span>';return;}
       saveToStore(raw); // auto-save for 7 days
+      buildTimeline();
       playing=true;
       progressWrap.style.display='block';
       progressBar.style.width='0%';
@@ -427,6 +490,7 @@
       queue=['Hello Frederick. This is a voice test. If you can hear me, everything is working.'];
       totalEstSec=estSeconds(queue.join(' '));
       elapsedSec=0; lastTick=Date.now();
+      buildTimeline();
       playing=true;
       progressWrap.style.display='block';
       progressBar.style.width='0%';
