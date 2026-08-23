@@ -4,7 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#16a34a">
-<title>Alef's Text Reader — v7</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<title>Alef's Text Reader — v7.8</title>
 <style>
   :root{--green:#16a34a;--green-dark:#14532d;--bg:#f6f8f6;--card:#fff;--ink:#1f2937;--muted:#6b7280;--border:#e5e7eb}
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -280,36 +283,43 @@
       const KEY='alef-frederick-2026';
       const voice=voiceEl.value, rate=parseFloat(rateEl.value);
       const parts=[];
-      let done=0;
+      let done=0, failed=0;
       statusEl.innerHTML='⏳ Downloading audio 0/'+chunks.length+'…';
-      const next=async(i)=>{
-        if(i>=chunks.length){
-          // all fetched -> stitch into one blob and download
-          const blob=new Blob(parts,{type:'audio/mpeg'});
-          const a=document.createElement('a');
-          a.href=URL.createObjectURL(blob);
-          a.download='alef-reader-audio.mp3';
-          document.body.appendChild(a); a.click(); a.remove();
-          statusEl.innerHTML='<span class="ok">✅ Full audio downloaded ('+fmt(estSeconds(norm))+' of listening).</span>';
-          btn.disabled=false; btn.textContent='⬇️ Full audio';
-          return;
-        }
+      // fetch up to 4 chunks in parallel for speed, then stitch
+      const CONCURRENCY=4;
+      const fetchOne=async(i)=>{
         try{
           const url=RELAY+'/tts?key='+KEY+'&voice='+voice+'&rate='+rate+'&text='+encodeURIComponent(chunks[i]);
           const r=await fetch(url);
           if(!r.ok) throw new Error('HTTP '+r.status);
-          parts.push(await r.blob());
+          return await r.blob();
         }catch(e){
-          // keep going even if one chunk fails (skip it)
+          failed++;
+          return null;
         }
-        done=i+1;
-        if(done%5===0||done===chunks.length){
-          statusEl.innerHTML='⏳ Downloading audio '+done+'/'+chunks.length+'…';
-        }
-        await next(i+1);
       };
-      next(0).catch(()=>{
-        statusEl.innerHTML='<span class="err">⚠️ Download failed — check connection and retry.</span>';
+      const worker=async(start)=>{
+        for(let i=start;i<chunks.length;i+=CONCURRENCY){
+          const blob=await fetchOne(i);
+          if(blob) parts[i]=blob;
+          done++;
+          if(done%3===0||done===chunks.length){
+            statusEl.innerHTML='⏳ Downloading audio '+done+'/'+chunks.length+(failed?' ('+failed+' skipped)':'')+'…';
+          }
+        }
+      };
+      const runners=[];
+      for(let w=0;w<CONCURRENCY;w++) runners.push(worker(w));
+      Promise.all(runners).then(()=>{
+        const ordered=[];
+        for(let i=0;i<chunks.length;i++){ if(parts[i]) ordered.push(parts[i]); }
+        if(!ordered.length){ statusEl.innerHTML='<span class="err">⚠️ Download failed — check connection and retry.</span>'; btn.disabled=false; btn.textContent='⬇️ Full audio'; return; }
+        const blob=new Blob(ordered,{type:'audio/mpeg'});
+        const a=document.createElement('a');
+        a.href=URL.createObjectURL(blob);
+        a.download='alef-reader-audio.mp3';
+        document.body.appendChild(a); a.click(); a.remove();
+        statusEl.innerHTML='<span class="ok">✅ Full audio downloaded ('+fmt(estSeconds(norm))+' of listening'+(failed?' · '+failed+' parts skipped':'')+').</span>';
         btn.disabled=false; btn.textContent='⬇️ Full audio';
       });
     };
@@ -376,6 +386,8 @@
       scrub.value=Math.round(Math.min(1,sec/Math.max(1,totalEstSec))*1000);
       scrubCur.textContent=fmt(sec);
       if(!playing) return;
+      // CRITICAL: drop the stale preloader so the target chunk actually loads
+      if(preloader){ try{preloader.src='';}catch(e){} preloader=null; }
       if(engine==='online'){
         playOnlineChunk(idx);
         // seek within the chunk once loaded (approximate, ±1 chunk)
@@ -665,6 +677,44 @@
     else if(!hasSpeech) diag='<span class="warn">⚠️ This browser has no phone voice. Use the Online voice.</span>';
     if(diag) statusEl.innerHTML=diag;
     checkStore();
+
+    // ---------- PWA: installable app + lock-screen controls (background reading) ----------
+    if('serviceWorker' in navigator){
+      navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    }
+    if('mediaSession' in navigator){
+      try{
+        navigator.mediaSession.metadata=new MediaMetadata({
+          title:'Alef Text Reader',
+          artist:'GoodFoodIQ',
+          album:'Reading aloud'
+        });
+        navigator.mediaSession.setActionHandler('play',()=>{ if(playing) player.play(); });
+        navigator.mediaSession.setActionHandler('pause',()=>{ player.pause(); });
+        navigator.mediaSession.setActionHandler('seekto',(d)=>{ if(d&&d.seekTime!=null) seekTo(d.seekTime); });
+        navigator.mediaSession.setActionHandler('previoustrack',()=>skip(-30));
+        navigator.mediaSession.setActionHandler('nexttrack',()=>skip(10));
+      }catch(e){}
+      // update lock-screen metadata while playing
+      const updateMeta=()=>{
+        if(!('mediaSession' in navigator)) return;
+        try{
+          navigator.mediaSession.metadata=new MediaMetadata({
+            title:fmt(elapsedSec)+' — '+(currentIdx+1)+'/'+queue.length,
+            artist:'Alef Text Reader',
+            album:'GoodFoodIQ'
+          });
+          if(player.duration&&isFinite(player.duration)){
+            navigator.mediaSession.setPositionState({
+              duration:Math.max(1,totalEstSec),
+              playbackRate:parseFloat(rateEl.value)||1,
+              position:Math.min(elapsedSec,totalEstSec||elapsedSec)
+            });
+          }
+        }catch(e){}
+      };
+      setInterval(updateMeta,5000);
+    }
   })();
 </script>
 </body>
