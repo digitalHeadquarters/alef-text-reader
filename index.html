@@ -185,15 +185,22 @@
     }
 
     // ---------- text prep ----------
-    function chunkText(text,maxLen=180){
+    // Split ONLY on real sentence boundaries: period/question/exclamation
+    // followed by whitespace and a capital letter (or digit). This keeps
+    // TOC dots ("Chapter 1 ....... 3") from fragmenting into tiny chunks.
+    function chunkText(text,maxLen=400){
+      const pieces=[];
+      const re=/([^.!?]+[.!?]+(?=\s+[A-Z0-9])|[^.!?]+$)/g;
+      let m;
+      while((m=re.exec(text))!==null){ pieces.push(m[1].trim()); }
       const chunks=[];
-      const sentences=text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[text];
       let cur='';
-      for(const s of sentences){
-        if((cur+s).length>maxLen){ if(cur) chunks.push(cur.trim()); cur=s; }
-        else cur+=s;
+      for(const p of pieces){
+        if(!p) continue;
+        if((cur+' '+p).length>maxLen && cur){ chunks.push(cur); cur=p; }
+        else cur=(cur?cur+' ':'')+p;
       }
-      if(cur.trim()) chunks.push(cur.trim());
+      if(cur) chunks.push(cur);
       return chunks;
     }
     // estimate seconds for a piece of text at current rate (~2.4 words/sec at 1.0x)
@@ -293,62 +300,59 @@
     }
     setInterval(tickTimer,1000);
 
-    // ---------- online engine ----------
+    // ---------- online engine: relay-only (Google fallback removed — it
+    // fragmented chunks and caused the jumping) ----------
     const RELAY='https://meetup-rendering-silicon-sam.trycloudflare.com';
     const RELAY_KEY='alef-frederick-2026';
-    const HOSTS=[
-      RELAY+'/tts?key='+RELAY_KEY+'&voice=${voice}&rate=${rate}&text=',
-      'https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=',
-      'https://translate.google.com/translate_tts?ie=UTF-8&client=gtx&tl='
-    ];
-    let hostIdx=0;
 
-    function setPlayerSrc(text,voice){
-      playerWrap.style.display='block';
-      const rate=parseFloat(rateEl.value);
-      if(hostIdx===0){
-        player.src=RELAY+'/tts?key='+RELAY_KEY+'&voice='+voice+'&rate='+rate+'&text='+encodeURIComponent(text);
-      } else {
-        player.src=HOSTS[hostIdx]+voice+'&q='+encodeURIComponent(text);
-      }
-      player.playbackRate=rate;
-    }
-
-    // build the URL for a given chunk — each host speaks a different voice dialect
-    const GOOGLE_VOICE={ryan:'en-GB', 'usa-m':'en-US', 'usa-f':'en-US'};
     function chunkUrl(text,voice){
       const rate=parseFloat(rateEl.value);
-      if(hostIdx===0){
-        // relay: real neural voices (ryan / usa-m / usa-f)
-        return RELAY+'/tts?key='+RELAY_KEY+'&voice='+voice+'&rate='+rate+'&text='+encodeURIComponent(text);
-      }
-      // google hosts: language codes (en-GB / en-US)
-      const gl=GOOGLE_VOICE[voice]||'en-GB';
-      return HOSTS[hostIdx]+gl+'&q='+encodeURIComponent(text);
+      return RELAY+'/tts?key='+RELAY_KEY+'&voice='+voice+'&rate='+rate+'&text='+encodeURIComponent(text);
     }
 
+    // preload next chunk during current playback -> seamless, no gaps
+    let preloader=null;
+    function preloadNext(i){
+      if(i+1>=queue.length) return;
+      try{
+        if(!preloader) preloader=new Audio();
+        preloader.referrerPolicy='no-referrer';
+        preloader.preload='auto';
+        preloader.src=chunkUrl(queue[i+1], voiceEl.value);
+      }catch(e){}
+    }
+
+    let retries=0;
     function playOnlineChunk(i){
       if(!playing) return;
       if(i>=queue.length){playing=false;progressBar.style.width='100%';statusEl.innerHTML='<span class="ok">✅ Finished.</span>';timerEl.textContent='⏱ '+fmt(totalEstSec)+' / '+fmt(totalEstSec)+' · 100%';return;}
       currentIdx=i;
       playerWrap.style.display='block';
-      player.src=chunkUrl(queue[i], voiceEl.value);
+      // use preloaded src when available (already fetched -> instant start)
+      if(preloader && preloader.src){
+        player.src=preloader.src;
+        preloader=new Audio(); // reset for next
+      } else {
+        player.src=chunkUrl(queue[i], voiceEl.value);
+      }
       player.playbackRate=parseFloat(rateEl.value);
       progressBar.style.width=((i/queue.length)*100)+'%';
       statusEl.innerHTML='<span class="ok">🔊 Reading '+(i+1)+' of '+queue.length+'…</span>';
-      // clear old handlers before setting new ones (prevents double-fire loops)
-      player.onended=null;
-      player.onerror=null;
-      player.onended=()=>{ if(playing) playOnlineChunk(i+1); };
+      // clean handlers, then set fresh ones (prevents loops)
+      player.onended=null; player.onerror=null;
+      player.onended=()=>{ if(playing){ retries=0; playOnlineChunk(i+1); } };
       player.onerror=()=>{
-        if(hostIdx<HOSTS.length-1){
-          hostIdx++;
-          statusEl.innerHTML='<span class="warn">⚠️ Switching voice server…</span>';
-          playOnlineChunk(i);
-        } else {
-          statusEl.innerHTML='<span class="err">⚠️ Online voice blocked. Tap "📱 Phone voice" or open in Chrome.</span>';
-          playing=false;
+        retries++;
+        if(retries>2){
+          // give up on this chunk: skip forward so reading never stalls
+          retries=0;
+          statusEl.innerHTML='<span class="warn">⚠️ Skipped a hard part — continuing…</span>';
+          if(playing) playOnlineChunk(i+1);
+          return;
         }
+        if(preloader && preloader.src){ preloader=new Audio(); }
+        statusEl.innerHTML='<span class="warn">⚠️ Voice hiccup — retrying…</span>';
+        setTimeout(()=>{ if(playing) playOnlineChunk(i); }, 800);
       };
       const p=player.play();
       if(p&&p.catch){
@@ -358,6 +362,7 @@
           playing=false;
         });
       }
+      preloadNext(i);
     }
 
     // ---------- device engine ----------
@@ -411,7 +416,6 @@
       playing=true;
       progressWrap.style.display='block';
       progressBar.style.width='0%';
-      hostIdx=0;
       timerEl.textContent='⏱ 0:00 / '+fmt(totalEstSec)+' · 0%';
       if(engine==='online') playOnlineChunk(0);
       else if(hasSpeech) playDeviceChunk(0);
@@ -426,7 +430,6 @@
       playing=true;
       progressWrap.style.display='block';
       progressBar.style.width='0%';
-      hostIdx=0;
       timerEl.textContent='⏱ 0:00 / '+fmt(totalEstSec);
       statusEl.innerHTML='<span class="ok">🔊 Testing voice…</span>';
       if(engine==='online') playOnlineChunk(0);
